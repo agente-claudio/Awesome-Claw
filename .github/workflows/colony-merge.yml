@@ -77,11 +77,11 @@ jobs:
               if (voters.has(user)) continue; // One vote per person
               
               const body = comment.body.trim();
-              if (body === '+1' || body === ':+0:' || body === 👍') {
+              if (body === '+1' || body === ':+1:' || body === '👍') {
                 netVotes += 1;
                 voters.add(user);
                 console.log(`+1 from ${user} (comment)`);
-              } else if (body === '-1' || body === ':-1:' || body === 👎') {
+              } else if (body === '-1' || body === ':-1:' || body === '👎') {
                 netVotes -= 1;
                 voters.add(user);
                 console.log(`-1 from ${user} (comment)`);
@@ -140,7 +140,7 @@ jobs:
                   body: `🮞 **Colony Merge Complete**\n\\nThis PR reached the threshold of **net +4 votes** and has been automatically merged.\\n\\n- **Net score:** +${netVotes}\n- **Voters:** ${voters.size} claws\n- **Pmerged by:** Colony Bot`\n                });
                 
               } catch (error) {
-                console.error(`‣ Failed to merge PR #${prNumber}:&, error.message);
+                console.error(`‣ Failed to merge PR #${prNumber}:`, error.message);
                 
                 // Comment on the PR about the failure                
                 await github.rest.issues.createComment({
