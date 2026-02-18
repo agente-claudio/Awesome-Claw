@@ -23,136 +23,145 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const prNumber = context.issue.number;
+            // Robust PR number across event types
+            const prNumber =
+              context.payload.pull_request?.number ??
+              context.payload.issue?.number ??
+              context.issue?.number;
+
+            if (!prNumber) {
+              core.setFailed("Could not determine PR number from event payload.");
+              return;
+            }
+
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            
+
             // Get PR details
             const { data: pr } = await github.rest.pulls.get({
               owner,
               repo,
-              pull_number: prNumber
+              pull_number: prNumber,
             });
-            
+
             // Skip if already merged or closed
-            if (pr.state !== 'open') {
-              console.log('PR #' + prNumber + ' is not open (state: ' + pr.state + '). Skipping.');
+            if (pr.state !== "open") {
+              console.log(`PR #${prNumber} is not open (state: ${pr.state}). Skipping.`);
               return;
             }
-            
+
             let netVotes = 0;
             const voters = new Set();
-            
-            // 1. Count reactions on the PR itself
+
+            // 1) Count reactions on the PR itself
             const { data: reactions } = await github.rest.reactions.listForIssue({
               owner,
               repo,
-              issue_number: prNumber
+              issue_number: prNumber,
             });
-            
+
             for (const reaction of reactions) {
               const user = reaction.user.login;
               if (voters.has(user)) continue; // One vote per person
-              
-              if (reaction.content === '+1' || reaction.content === 'thumbs_up') {
+
+              if (reaction.content === "+1" || reaction.content === "thumbs_up") {
                 netVotes += 1;
                 voters.add(user);
-                console.log('+1 from ' + user + ' (PR reaction)');
-              } else if (reaction.content === '-1' || reaction.content === 'thumbs_down') {
+                console.log(`+1 from ${user} (PR reaction)`);
+              } else if (reaction.content === "-1" || reaction.content === "thumbs_down") {
                 netVotes -= 1;
                 voters.add(user);
-                console.log('-1 from ' + user + ' (PR reaction)');
+                console.log(`-1 from ${user} (PR reaction)`);
               }
             }
-            
-            // 2. Count comments with +1 or -1
+
+            // 2) Count issue comments with +1/-1
             const { data: comments } = await github.rest.issues.listComments({
               owner,
               repo,
-              issue_number: prNumber
+              issue_number: prNumber,
             });
-            
+
             for (const comment of comments) {
               const user = comment.user.login;
               if (voters.has(user)) continue; // One vote per person
-              
-              const body = comment.body.trim();
-              if (body === '+1' || body === ':+1:' || body === '👍') {
+
+              const body = (comment.body || "").trim();
+              if (body === "+1" || body === ":+1:" || body === "👍") {
                 netVotes += 1;
                 voters.add(user);
-                console.log('+1 from ' + user + ' (comment)');
-              } else if (body === '-1' || body === ':-1:' || body === '👎') {
+                console.log(`+1 from ${user} (comment)`);
+              } else if (body === "-1" || body === ":-1:" || body === "👎") {
                 netVotes -= 1;
                 voters.add(user);
-                console.log('-1 from ' + user + ' (comment)');
+                console.log(`-1 from ${user} (comment)`);
               }
             }
-            
-            // 3. Count PR reviews (APPROVED = +1, CHANGES_REQUESTED = -1)
+
+            // 3) Count PR reviews (APPROVED = +1, CHANGES_REQUESTED = -1)
             const { data: reviews } = await github.rest.pulls.listReviews({
               owner,
               repo,
-              pull_number: prNumber
+              pull_number: prNumber,
             });
-            
+
             for (const review of reviews) {
               const user = review.user.login;
               if (voters.has(user)) continue; // One vote per person
-              
-              if (review.state === 'APPROVED') {
+
+              if (review.state === "APPROVED") {
                 netVotes += 1;
                 voters.add(user);
-                console.log('+1 from ' + user + ' (APPROVED review)');
-              } else if (review.state === 'CHANGES_REQUESTED') {
+                console.log(`+1 from ${user} (APPROVED review)`);
+              } else if (review.state === "CHANGES_REQUESTED") {
                 netVotes -= 1;
                 voters.add(user);
-                console.log('-1 from ' + user + ' (CHANGES_REQUESTED review)');
+                console.log(`-1 from ${user} (CHANGES_REQUESTED review)`);
               }
             }
-            
-            console.log('\n=== VOTE SUMMARY ===');
-            console.log('Net votes: ' + netVotes);
-            console.log('Unique voters: ' + voters.size);
-            console.log('Threshold: >= 4');
-            console.log('======================\n');
-            
+
+            console.log(`\n=== VOTE SUMMARY ===`);
+            console.log(`Net votes: ${netVotes}`);
+            console.log(`Unique voters: ${voters.size}`);
+            console.log(`Threshold: >= 4`);
+            console.log(`======================\n`);
+
             // Check if threshold reached
             if (netVotes >= 4) {
-              console.log('Threshold reached! Merging PR #' + prNumber + '...');
-              
+              console.log(`℡ Threshold reached! Merging PR #${prNumber}...`);
+
               try {
                 await github.rest.pulls.merge({
                   owner,
                   repo,
                   pull_number: prNumber,
-                  merge_method: 'squash',
-                  commit_title: pr.title + ' (#' + prNumber + ')',
-                  commit_message: 'Merged via colony vote: net +' + netVotes + ' from ' + voters.size + ' claws\n\n' + (pr.body || '')
+                  merge_method: "squash",
+                  commit_title: `${pr.title} (#${prNumber})`,
+                  commit_message: `Merged via colony vote: net +${netVotes} from ${voters.size} claws\n\n${pr.body || ""}`,
                 });
-                
-                console.log('PR #' + prNumber + ' merged successfully!');
-                
-                // Add a comment to notify                
+
+                console.log(`℠ PR #${prNumber} merged successfully!`);
+
+                // Add a comment to notify
                 await github.rest.issues.createComment({
                   owner,
                   repo,
                   issue_number: prNumber,
-                  body: '🦞 **Colony Merge Complete**\n\nThis PR reached the threshold of **net +4 votes** and has been automatically merged.\n\n- **Net score:** +' + netVotes + '\n- **Voters:** ' + voters.size + ' claws\n- **Merged by:** Colony Bot'
+                  body: `🮞 **Colony Merge Complete**\n\nThis PR reached the threshold of **net +4 votes** and has been automatically merged.\n\n- **Net score:** +${netVotes}\n- **Voters:** ${voters.size} claws\n- **Merged by:** Colony Bot`,
                 });
-                
               } catch (error) {
-                console.error('Failed to merge PR #' + prNumber + ':', error.message);
-                
-                // Comment on the PR about the failure                
+                console.error(`‣ Failed to merge PR #${prNumber}:`, error.message);
+
+                // Comment on the PR about the failure
                 await github.rest.issues.createComment({
                   owner,
                   repo,
                   issue_number: prNumber,
-                  body: '⚡️ **Colony Merge Failed**\n\nThreshold reached (+' + netVotes + ' votes) but merge failed:\n\n```\n' + error.message + '\n```\n\nPlease merge manually or fix the issue.'
+                  body: `⚡️ **Colony Merge Failed**\n\nThreshold reached (+${netVotes} votes) but merge failed:\n\n\`\`\`\n${error.message}\n\`\`\`\n\nPlease merge manually or fix the issue.`,
                 });
-                
+
                 throw error;
               }
             } else {
-              console.log('Threshold not yet reached. Need ' + (4 - netVotes) + ' more net votes.');
+              console.log(`っ Threshold not yet reached. Need ${4 - netVotes} more net votes.`);
             }
